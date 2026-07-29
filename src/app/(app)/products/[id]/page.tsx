@@ -1,8 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { uploadProductImage } from "@/lib/storage";
 import { formatMoney } from "@/lib/utils";
 import type { Tables } from "@/lib/database.types";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
@@ -10,6 +12,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 
 export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -17,9 +20,14 @@ export default function ProductDetailPage() {
   const { currentBusiness } = useWorkspace();
   const [categories, setCategories] = useState<Tables<"categories">[]>([]);
   const [brands, setBrands] = useState<Tables<"brands">[]>([]);
+  const [variants, setVariants] = useState<Tables<"product_variants">[]>([]);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [addingVariant, setAddingVariant] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [variantMessage, setVariantMessage] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     name: "",
@@ -35,6 +43,27 @@ export default function ProductDetailPage() {
     description: "",
     is_active: true,
   });
+
+  const [variantForm, setVariantForm] = useState({
+    name: "",
+    colour: "",
+    size: "",
+    sku: "",
+    selling_price: "",
+    stock_quantity: "0",
+  });
+
+  const loadVariants = useCallback(async () => {
+    if (!currentBusiness || !id) return;
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("product_variants")
+      .select("*")
+      .eq("product_id", id)
+      .eq("business_id", currentBusiness.id)
+      .order("name");
+    setVariants(data ?? []);
+  }, [currentBusiness, id]);
 
   useEffect(() => {
     if (!currentBusiness || !id) return;
@@ -76,6 +105,7 @@ export default function ProductDetailPage() {
           description: product.description ?? "",
           is_active: product.is_active,
         });
+        setImageUrl(product.image_url);
       }
       setCategories(cats ?? []);
       setBrands(brs ?? []);
@@ -83,7 +113,8 @@ export default function ProductDetailPage() {
     }
 
     load();
-  }, [currentBusiness, id]);
+    loadVariants();
+  }, [currentBusiness, id, loadVariants]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -122,6 +153,82 @@ export default function ProductDetailPage() {
     router.refresh();
   }
 
+  async function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !currentBusiness) return;
+
+    setUploadingImage(true);
+    setError(null);
+
+    try {
+      const url = await uploadProductImage(currentBusiness.id, id, file);
+      const supabase = createClient();
+      const { error: updateError } = await supabase
+        .from("products")
+        .update({ image_url: url })
+        .eq("id", id)
+        .eq("business_id", currentBusiness.id);
+
+      if (updateError) throw updateError;
+      setImageUrl(url);
+    } catch (uploadError) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Image upload failed.",
+      );
+    } finally {
+      setUploadingImage(false);
+      e.target.value = "";
+    }
+  }
+
+  async function handleAddVariant(e: React.FormEvent) {
+    e.preventDefault();
+    if (!currentBusiness || !variantForm.name.trim()) return;
+
+    setAddingVariant(true);
+    setVariantMessage(null);
+
+    const supabase = createClient();
+    const { error: insertError } = await supabase
+      .from("product_variants")
+      .insert({
+        product_id: id,
+        business_id: currentBusiness.id,
+        name: variantForm.name.trim(),
+        colour: variantForm.colour.trim() || null,
+        size: variantForm.size.trim() || null,
+        sku: variantForm.sku.trim() || null,
+        selling_price: parseFloat(variantForm.selling_price) || null,
+        stock_quantity: parseInt(variantForm.stock_quantity, 10) || 0,
+      });
+
+    if (insertError) {
+      setVariantMessage(insertError.message);
+      setAddingVariant(false);
+      return;
+    }
+
+    await supabase
+      .from("products")
+      .update({ has_variants: true })
+      .eq("id", id)
+      .eq("business_id", currentBusiness.id);
+
+    setVariantForm({
+      name: "",
+      colour: "",
+      size: "",
+      sku: "",
+      selling_price: "",
+      stock_quantity: "0",
+    });
+    setVariantMessage("Variant added.");
+    setAddingVariant(false);
+    await loadVariants();
+  }
+
   if (!currentBusiness) return null;
 
   if (loading) {
@@ -129,7 +236,7 @@ export default function ProductDetailPage() {
   }
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
         title={form.name || "Product"}
         description={`Price: ${formatMoney(parseFloat(form.selling_price) || 0, currentBusiness.currency)}`}
@@ -144,6 +251,35 @@ export default function ProductDetailPage() {
             {error}
           </div>
         )}
+
+        {imageUrl && (
+          <div className="mb-4">
+            <div className="relative h-40 w-40 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+              <Image
+                src={imageUrl}
+                alt={form.name || "Product"}
+                fill
+                className="object-cover"
+                unoptimized
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="mb-4">
+          <Label htmlFor="image">Product image</Label>
+          <Input
+            id="image"
+            type="file"
+            accept="image/*"
+            disabled={uploadingImage}
+            onChange={handleImageChange}
+            className="mt-1 cursor-pointer file:mr-3 file:rounded-md file:border-0 file:bg-[var(--surface)] file:px-3 file:py-1 file:text-sm"
+          />
+          {uploadingImage && (
+            <p className="mt-1 text-xs text-[var(--muted)]">Uploading…</p>
+          )}
+        </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
@@ -305,6 +441,150 @@ export default function ProductDetailPage() {
           </Button>
         </div>
       </form>
+
+      <section className="max-w-2xl rounded-xl border border-[var(--border)] bg-white p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="font-display text-lg font-semibold text-[var(--ink)]">
+              Variants
+            </h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Size, colour, or other product options.
+            </p>
+          </div>
+          <Badge>{variants.length}</Badge>
+        </div>
+
+        {variantMessage && (
+          <div
+            className={`mt-4 rounded-lg px-3 py-2 text-sm ${
+              variantMessage.includes("added")
+                ? "bg-[var(--accent-light)] text-[var(--accent)]"
+                : "bg-red-50 text-[var(--danger)]"
+            }`}
+          >
+            {variantMessage}
+          </div>
+        )}
+
+        {variants.length > 0 && (
+          <div className="mt-4 divide-y divide-[var(--border)]">
+            {variants.map((variant) => (
+              <div
+                key={variant.id}
+                className="flex flex-col gap-1 py-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div>
+                  <p className="text-sm font-medium text-[var(--ink)]">
+                    {variant.name}
+                  </p>
+                  <p className="text-xs text-[var(--muted)]">
+                    {[variant.colour, variant.size].filter(Boolean).join(" · ") ||
+                      "—"}
+                    {variant.sku ? ` · SKU: ${variant.sku}` : ""}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  {variant.selling_price != null && (
+                    <span className="text-[var(--ink)]">
+                      {formatMoney(
+                        variant.selling_price,
+                        currentBusiness.currency,
+                      )}
+                    </span>
+                  )}
+                  <Badge>{variant.stock_quantity} in stock</Badge>
+                  {!variant.is_active && <Badge>Inactive</Badge>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <form
+          onSubmit={handleAddVariant}
+          className="mt-4 grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 sm:grid-cols-2"
+        >
+          <div className="sm:col-span-2">
+            <Label htmlFor="variant_name">Variant name</Label>
+            <Input
+              id="variant_name"
+              value={variantForm.name}
+              onChange={(e) =>
+                setVariantForm({ ...variantForm, name: e.target.value })
+              }
+              placeholder="Red / Large"
+              required
+            />
+          </div>
+          <div>
+            <Label htmlFor="variant_colour">Colour</Label>
+            <Input
+              id="variant_colour"
+              value={variantForm.colour}
+              onChange={(e) =>
+                setVariantForm({ ...variantForm, colour: e.target.value })
+              }
+            />
+          </div>
+          <div>
+            <Label htmlFor="variant_size">Size</Label>
+            <Input
+              id="variant_size"
+              value={variantForm.size}
+              onChange={(e) =>
+                setVariantForm({ ...variantForm, size: e.target.value })
+              }
+            />
+          </div>
+          <div>
+            <Label htmlFor="variant_sku">SKU</Label>
+            <Input
+              id="variant_sku"
+              value={variantForm.sku}
+              onChange={(e) =>
+                setVariantForm({ ...variantForm, sku: e.target.value })
+              }
+            />
+          </div>
+          <div>
+            <Label htmlFor="variant_price">Selling price</Label>
+            <Input
+              id="variant_price"
+              type="number"
+              min="0"
+              step="0.01"
+              value={variantForm.selling_price}
+              onChange={(e) =>
+                setVariantForm({
+                  ...variantForm,
+                  selling_price: e.target.value,
+                })
+              }
+            />
+          </div>
+          <div>
+            <Label htmlFor="variant_stock">Stock quantity</Label>
+            <Input
+              id="variant_stock"
+              type="number"
+              min="0"
+              value={variantForm.stock_quantity}
+              onChange={(e) =>
+                setVariantForm({
+                  ...variantForm,
+                  stock_quantity: e.target.value,
+                })
+              }
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <Button type="submit" disabled={addingVariant}>
+              {addingVariant ? "Adding…" : "Add variant"}
+            </Button>
+          </div>
+        </form>
+      </section>
     </div>
   );
 }

@@ -18,21 +18,30 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { canAccessSection, type NavSection } from "@/lib/roles";
+import type { StaffRole } from "@/lib/database.types";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 
 type NavItem = {
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  section: NavSection;
   children?: { label: string; href: string }[];
 };
 
-const navItems: NavItem[] = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+const allNavItems: NavItem[] = [
+  {
+    label: "Dashboard",
+    href: "/dashboard",
+    icon: LayoutDashboard,
+    section: "dashboard",
+  },
   {
     label: "Products",
     href: "/products",
     icon: Package,
+    section: "products",
     children: [
       { label: "All products", href: "/products" },
       { label: "Categories", href: "/products/categories" },
@@ -43,24 +52,46 @@ const navItems: NavItem[] = [
     label: "Inventory",
     href: "/inventory",
     icon: Warehouse,
+    section: "inventory",
     children: [
       { label: "Stock levels", href: "/inventory" },
       { label: "Adjustments", href: "/inventory/adjustments" },
+      { label: "Transfers", href: "/inventory/transfers" },
     ],
   },
   {
     label: "Sales",
     href: "/sales/orders",
     icon: ShoppingCart,
+    section: "sales",
     children: [
       { label: "Quotations", href: "/sales/quotations" },
       { label: "Orders", href: "/sales/orders" },
     ],
   },
-  { label: "Customers", href: "/customers", icon: Users },
-  { label: "Notifications", href: "/notifications", icon: Bell },
-  { label: "Settings", href: "/settings", icon: Settings },
+  {
+    label: "Customers",
+    href: "/customers",
+    icon: Users,
+    section: "customers",
+  },
+  {
+    label: "Notifications",
+    href: "/notifications",
+    icon: Bell,
+    section: "notifications",
+  },
+  {
+    label: "Settings",
+    href: "/settings",
+    icon: Settings,
+    section: "settings",
+  },
 ];
+
+function filterNavItems(role: StaffRole) {
+  return allNavItems.filter((item) => canAccessSection(role, item.section));
+}
 
 function NavLink({
   item,
@@ -156,8 +187,10 @@ function NavLink({
 
 function SidebarContent({
   onNavigate,
+  navItems,
 }: {
   onNavigate?: () => void;
+  navItems: NavItem[];
 }) {
   const { businesses, currentBusiness, setCurrentBusinessId } = useWorkspace();
 
@@ -198,6 +231,41 @@ function SidebarContent({
   );
 }
 
+type MobileNavItem = {
+  label: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  section?: NavSection;
+};
+
+const allMobileNavItems: MobileNavItem[] = [
+  {
+    label: "Home",
+    href: "/dashboard",
+    icon: LayoutDashboard,
+    section: "dashboard",
+  },
+  {
+    label: "Products",
+    href: "/products",
+    icon: Package,
+    section: "products",
+  },
+  {
+    label: "Sales",
+    href: "/sales/orders",
+    icon: ShoppingCart,
+    section: "sales",
+  },
+  {
+    label: "Stock",
+    href: "/inventory",
+    icon: Boxes,
+    section: "inventory",
+  },
+  { label: "More", href: "#menu", icon: Menu },
+];
+
 export function AppShell({
   children,
   unreadCount = 0,
@@ -209,19 +277,19 @@ export function AppShell({
   const { currentBusiness } = useWorkspace();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const mobileNavItems = [
-    { label: "Home", href: "/dashboard", icon: LayoutDashboard },
-    { label: "Products", href: "/products", icon: Package },
-    { label: "Sales", href: "/sales/orders", icon: ShoppingCart },
-    { label: "Stock", href: "/inventory", icon: Boxes },
-    { label: "More", href: "#menu", icon: Menu },
-  ];
+  const role = currentBusiness?.role ?? "sales";
+  const navItems = filterNavItems(role);
+  const mobileNavItems = allMobileNavItems.filter(
+    (item) =>
+      item.href === "#menu" ||
+      (item.section && canAccessSection(role, item.section)),
+  );
 
   return (
     <div className="flex min-h-screen bg-[var(--surface)]">
       {/* Desktop sidebar */}
       <aside className="hidden w-60 shrink-0 border-r border-[var(--border)] bg-[var(--surface-elevated)] md:block">
-        <SidebarContent />
+        <SidebarContent navItems={navItems} />
       </aside>
 
       {/* Mobile drawer */}
@@ -242,7 +310,10 @@ export function AppShell({
             >
               <X className="h-5 w-5" />
             </button>
-            <SidebarContent onNavigate={() => setMobileOpen(false)} />
+            <SidebarContent
+              navItems={navItems}
+              onNavigate={() => setMobileOpen(false)}
+            />
           </aside>
         </div>
       )}

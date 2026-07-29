@@ -139,6 +139,27 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["branches"]["Insert"]>;
         Relationships: [];
       };
+      branch_stock: {
+        Row: {
+          id: string;
+          business_id: string;
+          branch_id: string;
+          product_id: string;
+          variant_id: string | null;
+          quantity: number;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          business_id: string;
+          branch_id: string;
+          product_id: string;
+          variant_id?: string | null;
+          quantity?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["branch_stock"]["Insert"]>;
+        Relationships: [];
+      };
       categories: {
         Row: {
           id: string;

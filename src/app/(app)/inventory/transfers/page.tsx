@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { History } from "lucide-react";
+import { ArrowLeftRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { formatRelativeDate } from "@/lib/utils";
 import type { Tables } from "@/lib/database.types";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
+import { canWriteInventory } from "@/lib/roles";
 import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,23 +15,28 @@ import { Label } from "@/components/ui/label";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
 
-type MovementRow = Tables<"inventory_movements"> & {
+type TransferRow = Tables<"inventory_movements"> & {
   products: { name: string } | null;
 };
 
-export default function AdjustmentsPage() {
+export default function TransfersPage() {
   const { currentBusiness, user } = useWorkspace();
-  const [movements, setMovements] = useState<MovementRow[]>([]);
+  const [transfers, setTransfers] = useState<TransferRow[]>([]);
   const [products, setProducts] = useState<Tables<"products">[]>([]);
   const [branches, setBranches] = useState<Tables<"branches">[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [productId, setProductId] = useState("");
-  const [branchId, setBranchId] = useState("");
+  const [fromBranchId, setFromBranchId] = useState("");
+  const [toBranchId, setToBranchId] = useState("");
   const [quantity, setQuantity] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const canWrite = currentBusiness
+    ? canWriteInventory(currentBusiness.role)
+    : false;
 
   const load = useCallback(async () => {
     if (!currentBusiness) return;
@@ -40,8 +46,9 @@ export default function AdjustmentsPage() {
         .from("inventory_movements")
         .select("*, products(name)")
         .eq("business_id", currentBusiness.id)
-        .eq("movement_type", "adjustment")
-        .order("created_at", { ascending: false }),
+        .eq("movement_type", "transfer")
+        .order("created_at", { ascending: false })
+        .limit(50),
       supabase
         .from("products")
         .select("*")
@@ -56,7 +63,7 @@ export default function AdjustmentsPage() {
         .order("is_main", { ascending: false })
         .order("name"),
     ]);
-    setMovements((moves as MovementRow[]) ?? []);
+    setTransfers((moves as TransferRow[]) ?? []);
     setProducts(prods ?? []);
     setBranches(brs ?? []);
     setLoading(false);
@@ -67,46 +74,43 @@ export default function AdjustmentsPage() {
   }, [load]);
 
   useEffect(() => {
-    if (branches.length > 0 && !branchId) {
-      setBranchId(branches[0]!.id);
+    if (branches.length > 0) {
+      if (!fromBranchId) setFromBranchId(branches[0]!.id);
+      if (!toBranchId && branches.length > 1) setToBranchId(branches[1]!.id);
     }
-  }, [branches, branchId]);
+  }, [branches, fromBranchId, toBranchId]);
 
-  async function handleAdjustment(e: React.FormEvent) {
+  async function handleTransfer(e: React.FormEvent) {
     e.preventDefault();
-    if (!currentBusiness || !productId || !quantity || !branchId) return;
+    if (!currentBusiness || !productId || !fromBranchId || !toBranchId) return;
 
     setSaving(true);
     setError(null);
-    const supabase = createClient();
+
     const qty = parseInt(quantity, 10);
-    if (qty === 0 || Number.isNaN(qty)) {
-      setError("Enter a non-zero adjustment amount.");
+    if (!qty || qty <= 0) {
+      setError("Quantity must be greater than zero.");
       setSaving(false);
       return;
     }
 
-    const product = products.find((p) => p.id === productId);
-    if (!product) {
+    if (fromBranchId === toBranchId) {
+      setError("From and to branches must be different.");
       setSaving(false);
       return;
     }
 
-    if (product.stock_quantity + qty < 0) {
-      setError("Adjustment would result in negative stock.");
-      setSaving(false);
-      return;
-    }
-
+    const supabase = createClient();
     const { error: insertError } = await supabase
       .from("inventory_movements")
       .insert({
         business_id: currentBusiness.id,
         product_id: productId,
-        branch_id: branchId,
-        movement_type: "adjustment",
+        branch_id: fromBranchId,
+        to_branch_id: toBranchId,
+        movement_type: "transfer",
         quantity: qty,
-        notes: notes || `Adjustment: ${qty > 0 ? "+" : ""}${qty}`,
+        notes: notes || null,
         created_by: user.id,
       });
 
@@ -126,18 +130,32 @@ export default function AdjustmentsPage() {
 
   if (!currentBusiness) return null;
 
-  const branchName = (branchIdValue: string | null) =>
-    branches.find((b) => b.id === branchIdValue)?.name ?? "—";
+  const branchName = (id: string | null) =>
+    branches.find((b) => b.id === id)?.name ?? "—";
+
+  if (!canWrite) {
+    return (
+      <div>
+        <PageHeader
+          title="Transfers"
+          description="Move stock between branches"
+        />
+        <p className="text-sm text-[var(--muted)]">
+          You do not have permission to record inventory transfers.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div>
       <PageHeader
-        title="Adjustments"
-        description="Inventory adjustment history"
+        title="Transfers"
+        description="Move stock between branches"
         actions={
           <div className="flex gap-2">
             <Button size="sm" onClick={() => setShowForm(!showForm)}>
-              New adjustment
+              New transfer
             </Button>
             <Link href="/inventory">
               <Button size="sm" variant="ghost">
@@ -150,22 +168,36 @@ export default function AdjustmentsPage() {
 
       {showForm && (
         <form
-          onSubmit={handleAdjustment}
+          onSubmit={handleTransfer}
           className="mb-6 rounded-xl border border-[var(--border)] bg-white p-4"
         >
-          <p className="text-sm text-[var(--muted)]">
-            Use positive numbers to add stock, negative to remove.
-          </p>
           {error && (
-            <p className="mt-2 text-sm text-[var(--danger)]">{error}</p>
+            <p className="text-sm text-[var(--danger)]">{error}</p>
           )}
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <Label htmlFor="branch">Branch</Label>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="sm:col-span-2 lg:col-span-3">
+              <Label htmlFor="product">Product</Label>
               <select
-                id="branch"
-                value={branchId}
-                onChange={(e) => setBranchId(e.target.value)}
+                id="product"
+                value={productId}
+                onChange={(e) => setProductId(e.target.value)}
+                required
+                className="flex h-10 w-full rounded-xl border border-[var(--border)] bg-white px-3 text-sm"
+              >
+                <option value="">Select product</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.stock_quantity} total)
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label htmlFor="from_branch">From branch</Label>
+              <select
+                id="from_branch"
+                value={fromBranchId}
+                onChange={(e) => setFromBranchId(e.target.value)}
                 required
                 className="flex h-10 w-full rounded-xl border border-[var(--border)] bg-white px-3 text-sm"
               >
@@ -178,44 +210,46 @@ export default function AdjustmentsPage() {
               </select>
             </div>
             <div>
-              <Label htmlFor="product">Product</Label>
+              <Label htmlFor="to_branch">To branch</Label>
               <select
-                id="product"
-                value={productId}
-                onChange={(e) => setProductId(e.target.value)}
+                id="to_branch"
+                value={toBranchId}
+                onChange={(e) => setToBranchId(e.target.value)}
                 required
                 className="flex h-10 w-full rounded-xl border border-[var(--border)] bg-white px-3 text-sm"
               >
-                <option value="">Select product</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
+                <option value="">Select branch</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
                   </option>
                 ))}
               </select>
             </div>
             <div>
-              <Label htmlFor="qty">Adjustment (+/-)</Label>
+              <Label htmlFor="qty">Quantity</Label>
               <Input
                 id="qty"
                 type="number"
+                min="1"
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
                 required
               />
             </div>
-            <div>
+            <div className="sm:col-span-2">
               <Label htmlFor="notes">Notes</Label>
               <Input
                 id="notes"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
+                placeholder="Optional"
               />
             </div>
           </div>
           <div className="mt-3 flex gap-2">
-            <Button type="submit" size="sm" disabled={saving || !branchId}>
-              {saving ? "Saving…" : "Apply adjustment"}
+            <Button type="submit" size="sm" disabled={saving}>
+              {saving ? "Saving…" : "Record transfer"}
             </Button>
             <Button
               type="button"
@@ -231,11 +265,11 @@ export default function AdjustmentsPage() {
 
       {loading ? (
         <p className="text-sm text-[var(--muted)]">Loading…</p>
-      ) : movements.length === 0 ? (
+      ) : transfers.length === 0 ? (
         <EmptyState
-          icon={History}
-          title="No adjustments"
-          description="Record stock corrections here."
+          icon={ArrowLeftRight}
+          title="No transfers"
+          description="Move stock between your branches."
         />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-white">
@@ -243,35 +277,36 @@ export default function AdjustmentsPage() {
             <thead>
               <tr className="border-b border-[var(--border)] bg-[var(--surface)] text-left text-[var(--muted)]">
                 <th className="px-4 py-3 font-medium">Date</th>
-                <th className="px-4 py-3 font-medium">Branch</th>
                 <th className="px-4 py-3 font-medium">Product</th>
+                <th className="px-4 py-3 font-medium">From</th>
+                <th className="px-4 py-3 font-medium">To</th>
                 <th className="px-4 py-3 font-medium">Qty</th>
                 <th className="px-4 py-3 font-medium">Notes</th>
               </tr>
             </thead>
             <tbody>
-              {movements.map((m) => (
+              {transfers.map((t) => (
                 <tr
-                  key={m.id}
+                  key={t.id}
                   className="border-b border-[var(--border)] last:border-0"
                 >
                   <td className="px-4 py-3 text-[var(--muted)]">
-                    {formatRelativeDate(m.created_at)}
-                  </td>
-                  <td className="px-4 py-3 text-[var(--muted)]">
-                    {branchName(m.branch_id)}
+                    {formatRelativeDate(t.created_at)}
                   </td>
                   <td className="px-4 py-3 text-[var(--ink)]">
-                    {m.products?.name ?? "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant={m.quantity >= 0 ? "accent" : "warning"}>
-                      {m.quantity > 0 ? "+" : ""}
-                      {m.quantity}
-                    </Badge>
+                    {t.products?.name ?? "—"}
                   </td>
                   <td className="px-4 py-3 text-[var(--muted)]">
-                    {m.notes ?? "—"}
+                    {branchName(t.branch_id)}
+                  </td>
+                  <td className="px-4 py-3 text-[var(--muted)]">
+                    {branchName(t.to_branch_id)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge>{t.quantity}</Badge>
+                  </td>
+                  <td className="px-4 py-3 text-[var(--muted)]">
+                    {t.notes ?? "—"}
                   </td>
                 </tr>
               ))}

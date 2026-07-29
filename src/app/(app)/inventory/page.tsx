@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Warehouse } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@/lib/database.types";
@@ -16,49 +16,73 @@ import { Badge } from "@/components/ui/badge";
 export default function InventoryPage() {
   const { currentBusiness, user } = useWorkspace();
   const [products, setProducts] = useState<Tables<"products">[]>([]);
+  const [branches, setBranches] = useState<Tables<"branches">[]>([]);
   const [loading, setLoading] = useState(true);
   const [panelOpen, setPanelOpen] = useState(false);
   const [movementType, setMovementType] = useState<"stock_in" | "stock_out">(
     "stock_in",
   );
   const [productId, setProductId] = useState("");
+  const [branchId, setBranchId] = useState("");
   const [quantity, setQuantity] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadProducts() {
+  const loadProducts = useCallback(async () => {
     if (!currentBusiness) return;
     const supabase = createClient();
-    const { data } = await supabase
-      .from("products")
-      .select("*")
-      .eq("business_id", currentBusiness.id)
-      .eq("is_active", true)
-      .order("name");
-    setProducts(data ?? []);
+    const [{ data: prods }, { data: brs }] = await Promise.all([
+      supabase
+        .from("products")
+        .select("*")
+        .eq("business_id", currentBusiness.id)
+        .eq("is_active", true)
+        .order("name"),
+      supabase
+        .from("branches")
+        .select("*")
+        .eq("business_id", currentBusiness.id)
+        .eq("is_active", true)
+        .order("is_main", { ascending: false })
+        .order("name"),
+    ]);
+    setProducts(prods ?? []);
+    setBranches(brs ?? []);
     setLoading(false);
-  }
+  }, [currentBusiness]);
 
   useEffect(() => {
     loadProducts();
-  }, [currentBusiness]);
+  }, [loadProducts]);
+
+  useEffect(() => {
+    if (branches.length > 0 && !branchId) {
+      setBranchId(branches[0]!.id);
+    }
+  }, [branches, branchId]);
 
   async function handleMovement(e: React.FormEvent) {
     e.preventDefault();
-    if (!currentBusiness || !productId || !quantity) return;
+    if (!currentBusiness || !productId || !quantity || !branchId) return;
 
     setSaving(true);
     setError(null);
     const supabase = createClient();
     const qty = parseInt(quantity, 10);
+    if (qty <= 0) {
+      setError("Quantity must be greater than zero.");
+      setSaving(false);
+      return;
+    }
+
     const product = products.find((p) => p.id === productId);
-    if (!product) return;
+    if (!product) {
+      setSaving(false);
+      return;
+    }
 
-    const delta = movementType === "stock_in" ? qty : -qty;
-    const newStock = product.stock_quantity + delta;
-
-    if (newStock < 0) {
+    if (movementType === "stock_out" && product.stock_quantity < qty) {
       setError("Insufficient stock for stock out.");
       setSaving(false);
       return;
@@ -69,6 +93,7 @@ export default function InventoryPage() {
       .insert({
         business_id: currentBusiness.id,
         product_id: productId,
+        branch_id: branchId,
         movement_type: movementType,
         quantity: qty,
         notes: notes || null,
@@ -81,18 +106,12 @@ export default function InventoryPage() {
       return;
     }
 
-    await supabase
-      .from("products")
-      .update({ stock_quantity: newStock })
-      .eq("id", productId)
-      .eq("business_id", currentBusiness.id);
-
     setPanelOpen(false);
     setProductId("");
     setQuantity("");
     setNotes("");
     setSaving(false);
-    loadProducts();
+    await loadProducts();
   }
 
   if (!currentBusiness) return null;
@@ -103,7 +122,7 @@ export default function InventoryPage() {
         title="Inventory"
         description="Current stock levels"
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
               onClick={() => {
@@ -128,6 +147,11 @@ export default function InventoryPage() {
                 Adjustments
               </Button>
             </Link>
+            <Link href="/inventory/transfers">
+              <Button size="sm" variant="ghost">
+                Transfers
+              </Button>
+            </Link>
           </div>
         }
       />
@@ -143,7 +167,25 @@ export default function InventoryPage() {
           {error && (
             <p className="mt-2 text-sm text-[var(--danger)]">{error}</p>
           )}
-          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <Label htmlFor="branch">Branch</Label>
+              <select
+                id="branch"
+                value={branchId}
+                onChange={(e) => setBranchId(e.target.value)}
+                required
+                className="flex h-10 w-full rounded-xl border border-[var(--border)] bg-white px-3 text-sm"
+              >
+                <option value="">Select branch</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                    {b.is_main ? " (Main)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div>
               <Label htmlFor="product">Product</Label>
               <select
@@ -183,7 +225,7 @@ export default function InventoryPage() {
             </div>
           </div>
           <div className="mt-3 flex gap-2">
-            <Button type="submit" size="sm" disabled={saving}>
+            <Button type="submit" size="sm" disabled={saving || !branchId}>
               {saving ? "Saving…" : "Record movement"}
             </Button>
             <Button

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { uploadProductImage } from "@/lib/storage";
 import type { Tables } from "@/lib/database.types";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { PageHeader } from "@/components/ui/page-header";
@@ -12,11 +13,12 @@ import { Label } from "@/components/ui/label";
 
 export default function NewProductPage() {
   const router = useRouter();
-  const { currentBusiness } = useWorkspace();
+  const { currentBusiness, user } = useWorkspace();
   const [categories, setCategories] = useState<Tables<"categories">[]>([]);
   const [brands, setBrands] = useState<Tables<"brands">[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
 
   const [form, setForm] = useState({
     name: "",
@@ -64,6 +66,21 @@ export default function NewProductPage() {
     setError(null);
 
     const supabase = createClient();
+    const initialStock = parseInt(form.stock_quantity, 10) || 0;
+
+    const { data: mainBranch } =
+      initialStock > 0
+        ? await supabase
+            .from("branches")
+            .select("id")
+            .eq("business_id", currentBusiness.id)
+            .eq("is_main", true)
+            .eq("is_active", true)
+            .maybeSingle()
+        : { data: null };
+
+    const seedViaMovement = initialStock > 0 && !!mainBranch?.id;
+
     const { data, error: insertError } = await supabase
       .from("products")
       .insert({
@@ -75,7 +92,7 @@ export default function NewProductPage() {
         brand_id: form.brand_id || null,
         cost_price: parseFloat(form.cost_price) || 0,
         selling_price: parseFloat(form.selling_price) || 0,
-        stock_quantity: parseInt(form.stock_quantity, 10) || 0,
+        stock_quantity: seedViaMovement ? 0 : initialStock,
         reorder_level: parseInt(form.reorder_level, 10) || 0,
         unit: form.unit,
         description: form.description || null,
@@ -87,6 +104,42 @@ export default function NewProductPage() {
       setError(insertError.message);
       setLoading(false);
       return;
+    }
+
+    if (imageFile) {
+      try {
+        const imageUrl = await uploadProductImage(
+          currentBusiness.id,
+          data.id,
+          imageFile,
+        );
+        await supabase
+          .from("products")
+          .update({ image_url: imageUrl })
+          .eq("id", data.id)
+          .eq("business_id", currentBusiness.id);
+      } catch (uploadError) {
+        setError(
+          uploadError instanceof Error
+            ? uploadError.message
+            : "Product created but image upload failed.",
+        );
+        setLoading(false);
+        router.push(`/products/${data.id}`);
+        return;
+      }
+    }
+
+    if (seedViaMovement && mainBranch) {
+      await supabase.from("inventory_movements").insert({
+        business_id: currentBusiness.id,
+        product_id: data.id,
+        branch_id: mainBranch.id,
+        movement_type: "stock_in",
+        quantity: initialStock,
+        notes: "Initial stock on product creation",
+        created_by: user.id,
+      });
     }
 
     router.push(`/products/${data.id}`);
@@ -225,6 +278,16 @@ export default function NewProductPage() {
               id="unit"
               value={form.unit}
               onChange={(e) => setForm({ ...form, unit: e.target.value })}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <Label htmlFor="image">Product image</Label>
+            <Input
+              id="image"
+              type="file"
+              accept="image/*"
+              onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
+              className="cursor-pointer file:mr-3 file:rounded-md file:border-0 file:bg-[var(--surface)] file:px-3 file:py-1 file:text-sm"
             />
           </div>
           <div className="sm:col-span-2">

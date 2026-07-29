@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import type { StaffRole } from "@/lib/database.types";
+import type { StaffRole, Tables } from "@/lib/database.types";
+import { canManageBranches } from "@/lib/roles";
 
 type TeamMember = {
   id: string;
@@ -55,6 +56,39 @@ export default function SettingsPage() {
   const [inviteBusy, setInviteBusy] = useState(false);
   const [teamMessage, setTeamMessage] = useState<string | null>(null);
 
+  const [branches, setBranches] = useState<Tables<"branches">[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(false);
+  const [branchMessage, setBranchMessage] = useState<string | null>(null);
+  const [branchForm, setBranchForm] = useState({
+    name: "",
+    code: "",
+    address: "",
+    phone: "",
+  });
+  const [branchBusy, setBranchBusy] = useState(false);
+
+  const canManageBranchList = currentBusiness
+    ? canManageBranches(currentBusiness.role)
+    : false;
+
+  const loadBranches = useCallback(async () => {
+    if (!currentBusiness) return;
+    setBranchesLoading(true);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("branches")
+      .select("*")
+      .eq("business_id", currentBusiness.id)
+      .order("is_main", { ascending: false })
+      .order("name");
+    setBranchesLoading(false);
+    if (error) {
+      setBranchMessage(error.message);
+      return;
+    }
+    setBranches(data ?? []);
+  }, [currentBusiness]);
+
   const loadTeam = useCallback(async () => {
     if (!currentBusiness) return;
     setTeamLoading(true);
@@ -98,7 +132,8 @@ export default function SettingsPage() {
 
     load();
     loadTeam();
-  }, [currentBusiness, loadTeam]);
+    loadBranches();
+  }, [currentBusiness, loadTeam, loadBranches]);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -178,6 +213,64 @@ export default function SettingsPage() {
     }
     setTeamMessage("Member removed.");
     await loadTeam();
+  }
+
+  async function handleAddBranch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!currentBusiness || !branchForm.name.trim()) return;
+
+    setBranchBusy(true);
+    setBranchMessage(null);
+    const supabase = createClient();
+    const { error } = await supabase.from("branches").insert({
+      business_id: currentBusiness.id,
+      name: branchForm.name.trim(),
+      code: branchForm.code.trim() || null,
+      address: branchForm.address.trim() || null,
+      phone: branchForm.phone.trim() || null,
+      is_main: branches.length === 0,
+      is_active: true,
+    });
+    setBranchBusy(false);
+
+    if (error) {
+      setBranchMessage(error.message);
+      return;
+    }
+
+    setBranchForm({ name: "", code: "", address: "", phone: "" });
+    setBranchMessage("Branch added.");
+    await loadBranches();
+  }
+
+  async function handleDeactivateBranch(branch: Tables<"branches">) {
+    if (branch.is_main) {
+      setBranchMessage("Cannot deactivate the main branch.");
+      return;
+    }
+    const activeCount = branches.filter((b) => b.is_active).length;
+    if (branch.is_main && activeCount <= 1) {
+      setBranchMessage("Cannot deactivate the only main branch.");
+      return;
+    }
+
+    if (!confirm(`Deactivate branch "${branch.name}"?`)) return;
+
+    setBranchMessage(null);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("branches")
+      .update({ is_active: false })
+      .eq("id", branch.id)
+      .eq("business_id", currentBusiness!.id);
+
+    if (error) {
+      setBranchMessage(error.message);
+      return;
+    }
+
+    setBranchMessage("Branch deactivated.");
+    await loadBranches();
   }
 
   async function handleSignOut() {
@@ -433,6 +526,149 @@ export default function SettingsPage() {
             })
           )}
         </div>
+      </section>
+
+      <section className="max-w-2xl rounded-xl border border-[var(--border)] bg-white p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="font-display text-lg font-semibold text-[var(--ink)]">
+              Branches
+            </h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Store locations for inventory and sales.
+            </p>
+          </div>
+          <Badge>
+            {branches.filter((b) => b.is_active).length} active
+          </Badge>
+        </div>
+
+        {branchMessage && (
+          <div
+            className={`mt-4 rounded-lg px-3 py-2 text-sm ${
+              branchMessage.includes("added") ||
+              branchMessage.includes("deactivated")
+                ? "bg-[var(--accent-light)] text-[var(--accent)]"
+                : "bg-red-50 text-[var(--danger)]"
+            }`}
+          >
+            {branchMessage}
+          </div>
+        )}
+
+        {canManageBranchList && (
+          <form
+            onSubmit={handleAddBranch}
+            className="mt-4 grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 sm:grid-cols-2"
+          >
+            <div className="sm:col-span-2">
+              <Label htmlFor="branch_name">Branch name</Label>
+              <Input
+                id="branch_name"
+                value={branchForm.name}
+                onChange={(e) =>
+                  setBranchForm({ ...branchForm, name: e.target.value })
+                }
+                placeholder="Main store"
+                required
+              />
+            </div>
+            <div>
+              <Label htmlFor="branch_code">Code</Label>
+              <Input
+                id="branch_code"
+                value={branchForm.code}
+                onChange={(e) =>
+                  setBranchForm({ ...branchForm, code: e.target.value })
+                }
+                placeholder="HQ"
+              />
+            </div>
+            <div>
+              <Label htmlFor="branch_phone">Phone</Label>
+              <Input
+                id="branch_phone"
+                value={branchForm.phone}
+                onChange={(e) =>
+                  setBranchForm({ ...branchForm, phone: e.target.value })
+                }
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label htmlFor="branch_address">Address</Label>
+              <Input
+                id="branch_address"
+                value={branchForm.address}
+                onChange={(e) =>
+                  setBranchForm({ ...branchForm, address: e.target.value })
+                }
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Button type="submit" disabled={branchBusy}>
+                {branchBusy ? "Adding…" : "Add branch"}
+              </Button>
+            </div>
+          </form>
+        )}
+
+        <div className="mt-4 divide-y divide-[var(--border)]">
+          {branchesLoading ? (
+            <p className="py-4 text-sm text-[var(--muted)]">Loading branches…</p>
+          ) : branches.length === 0 ? (
+            <p className="py-4 text-sm text-[var(--muted)]">No branches yet.</p>
+          ) : (
+            branches.map((branch) => (
+              <div
+                key={branch.id}
+                className="flex flex-col gap-3 py-4 sm:flex-row sm:items-start sm:justify-between"
+              >
+                <div>
+                  <p className="text-sm font-medium text-[var(--ink)]">
+                    {branch.name}
+                    {branch.is_main && (
+                      <span className="ml-2 text-xs font-normal text-[var(--muted)]">
+                        (Main)
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-[var(--muted)]">
+                    {branch.code ? `Code: ${branch.code}` : "No code"}
+                    {branch.phone ? ` · ${branch.phone}` : ""}
+                  </p>
+                  {branch.address && (
+                    <p className="mt-1 text-xs text-[var(--muted)]">
+                      {branch.address}
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {branch.is_active ? (
+                    <Badge variant="accent">Active</Badge>
+                  ) : (
+                    <Badge>Inactive</Badge>
+                  )}
+                  {canManageBranchList &&
+                    branch.is_active &&
+                    !branch.is_main && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => handleDeactivateBranch(branch)}
+                      >
+                        Deactivate
+                      </Button>
+                    )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        {!canManageBranchList && (
+          <p className="mt-3 text-xs text-[var(--muted)]">
+            Only admins and managers can manage branches.
+          </p>
+        )}
       </section>
     </div>
   );
