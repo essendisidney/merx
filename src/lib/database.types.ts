@@ -470,6 +470,34 @@ export interface Database {
         Args: { p_business_id: string };
         Returns: string;
       };
+      add_business_member: {
+        Args: {
+          p_business_id: string;
+          p_email: string;
+          p_role?: StaffRole;
+        };
+        Returns: Database["public"]["Tables"]["business_members"]["Row"];
+      };
+      update_business_member_role: {
+        Args: { p_member_id: string; p_role: StaffRole };
+        Returns: Database["public"]["Tables"]["business_members"]["Row"];
+      };
+      deactivate_business_member: {
+        Args: { p_member_id: string };
+        Returns: Database["public"]["Tables"]["business_members"]["Row"];
+      };
+      list_business_members: {
+        Args: { p_business_id: string };
+        Returns: {
+          id: string;
+          user_id: string;
+          role: StaffRole;
+          is_active: boolean;
+          full_name: string | null;
+          email: string | null;
+          created_at: string;
+        }[];
+      };
     };
     Views: Record<string, never>;
     Enums: Record<string, never>;
