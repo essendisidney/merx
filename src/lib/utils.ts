@@ -44,6 +44,36 @@ export const NEXT_ORDER_STATUS: Partial<Record<OrderStatus, OrderStatus>> = {
   order: "completed",
 };
 
+export const PAYMENT_METHOD_LABELS: Record<
+  import("./database.types").PaymentMethod,
+  string
+> = {
+  cash: "Cash",
+  mpesa: "M-Pesa",
+  bank: "Bank transfer",
+  card: "Card",
+  other: "Other",
+};
+
+export const ORDER_PAYMENT_STATUS_LABELS: Record<
+  import("./database.types").OrderPaymentStatus,
+  string
+> = {
+  unpaid: "Unpaid",
+  partial: "Partial",
+  paid: "Paid",
+};
+
+export const INVOICE_STATUS_LABELS: Record<
+  import("./database.types").InvoiceStatus,
+  string
+> = {
+  draft: "Draft",
+  issued: "Issued",
+  paid: "Paid",
+  void: "Void",
+};
+
 export function formatRelativeDate(iso: string) {
   const date = new Date(iso);
   return date.toLocaleDateString("en-KE", {

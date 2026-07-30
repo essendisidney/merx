@@ -18,6 +18,11 @@ export type NotificationType =
   | "new_customer"
   | "order_completed"
   | "general";
+export type PaymentMethod = "cash" | "mpesa" | "bank" | "card" | "other";
+export type PaymentStatus = "pending" | "completed" | "failed" | "refunded";
+export type InvoiceStatus = "draft" | "issued" | "paid" | "void";
+export type ReceiptStatus = "issued" | "void";
+export type OrderPaymentStatus = "unpaid" | "partial" | "paid";
 
 export type Json =
   | string
@@ -373,6 +378,8 @@ export interface Database {
           created_by: string | null;
           created_at: string;
           updated_at: string;
+          amount_paid: number;
+          payment_status: OrderPaymentStatus;
         };
         Insert: {
           id?: string;
@@ -390,6 +397,8 @@ export interface Database {
           order_date?: string | null;
           completed_at?: string | null;
           created_by?: string | null;
+          amount_paid?: number;
+          payment_status?: OrderPaymentStatus;
         };
         Update: Partial<Database["public"]["Tables"]["orders"]["Insert"]>;
         Relationships: [
@@ -481,6 +490,136 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["activity_logs"]["Insert"]>;
         Relationships: [];
       };
+      invoices: {
+        Row: {
+          id: string;
+          business_id: string;
+          order_id: string;
+          invoice_number: string;
+          status: InvoiceStatus;
+          subtotal: number;
+          tax_amount: number;
+          discount_amount: number;
+          total: number;
+          notes: string | null;
+          issued_at: string | null;
+          due_at: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          business_id: string;
+          order_id: string;
+          invoice_number: string;
+          status?: InvoiceStatus;
+          subtotal?: number;
+          tax_amount?: number;
+          discount_amount?: number;
+          total?: number;
+          notes?: string | null;
+          issued_at?: string | null;
+          due_at?: string | null;
+          created_by?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["invoices"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "invoices_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      payments: {
+        Row: {
+          id: string;
+          business_id: string;
+          order_id: string;
+          invoice_id: string | null;
+          amount: number;
+          method: PaymentMethod;
+          status: PaymentStatus;
+          reference: string | null;
+          paid_at: string;
+          notes: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          business_id: string;
+          order_id: string;
+          invoice_id?: string | null;
+          amount: number;
+          method?: PaymentMethod;
+          status?: PaymentStatus;
+          reference?: string | null;
+          paid_at?: string;
+          notes?: string | null;
+          created_by?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["payments"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "payments_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "payments_invoice_id_fkey";
+            columns: ["invoice_id"];
+            isOneToOne: false;
+            referencedRelation: "invoices";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      receipts: {
+        Row: {
+          id: string;
+          business_id: string;
+          order_id: string;
+          payment_id: string;
+          receipt_number: string;
+          status: ReceiptStatus;
+          issued_at: string;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          business_id: string;
+          order_id: string;
+          payment_id: string;
+          receipt_number: string;
+          status?: ReceiptStatus;
+          issued_at?: string;
+          created_by?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["receipts"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "receipts_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "receipts_payment_id_fkey";
+            columns: ["payment_id"];
+            isOneToOne: true;
+            referencedRelation: "payments";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Functions: {
       create_business: {
@@ -518,6 +657,29 @@ export interface Database {
           email: string | null;
           created_at: string;
         }[];
+      };
+      next_invoice_number: {
+        Args: { p_business_id: string };
+        Returns: string;
+      };
+      next_receipt_number: {
+        Args: { p_business_id: string };
+        Returns: string;
+      };
+      create_invoice_from_order: {
+        Args: { p_order_id: string };
+        Returns: Database["public"]["Tables"]["invoices"]["Row"];
+      };
+      record_payment: {
+        Args: {
+          p_order_id: string;
+          p_amount: number;
+          p_method?: PaymentMethod;
+          p_reference?: string | null;
+          p_notes?: string | null;
+          p_invoice_id?: string | null;
+        };
+        Returns: Json;
       };
     };
     Views: Record<string, never>;

@@ -67,6 +67,8 @@ const allNavItems: NavItem[] = [
     children: [
       { label: "Quotations", href: "/sales/quotations" },
       { label: "Orders", href: "/sales/orders" },
+      { label: "Invoices", href: "/sales/invoices" },
+      { label: "Payments", href: "/sales/payments" },
     ],
   },
   {

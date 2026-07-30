@@ -1,6 +1,14 @@
 import { cn } from "@/lib/utils";
-import type { OrderStatus } from "@/lib/database.types";
-import { ORDER_STATUS_LABELS } from "@/lib/utils";
+import type {
+  InvoiceStatus,
+  OrderPaymentStatus,
+  OrderStatus,
+} from "@/lib/database.types";
+import {
+  INVOICE_STATUS_LABELS,
+  ORDER_PAYMENT_STATUS_LABELS,
+  ORDER_STATUS_LABELS,
+} from "@/lib/utils";
 
 type BadgeVariant = "default" | "accent" | "warning" | "danger" | "muted";
 
@@ -47,6 +55,39 @@ export function OrderStatusBadge({ status }: { status: OrderStatus }) {
   return (
     <Badge variant={statusVariant[status] ?? "default"}>
       {ORDER_STATUS_LABELS[status]}
+    </Badge>
+  );
+}
+
+const paymentStatusVariant: Record<OrderPaymentStatus, BadgeVariant> = {
+  unpaid: "danger",
+  partial: "warning",
+  paid: "accent",
+};
+
+export function OrderPaymentStatusBadge({
+  status,
+}: {
+  status: OrderPaymentStatus;
+}) {
+  return (
+    <Badge variant={paymentStatusVariant[status]}>
+      {ORDER_PAYMENT_STATUS_LABELS[status]}
+    </Badge>
+  );
+}
+
+const invoiceStatusVariant: Record<InvoiceStatus, BadgeVariant> = {
+  draft: "muted",
+  issued: "default",
+  paid: "accent",
+  void: "danger",
+};
+
+export function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
+  return (
+    <Badge variant={invoiceStatusVariant[status]}>
+      {INVOICE_STATUS_LABELS[status]}
     </Badge>
   );
 }
